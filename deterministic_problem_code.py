@@ -25,7 +25,7 @@ from matplotlib.lines import Line2D
 
 input_file = "deterministic_data.xlsx"
 
-scenario = "scenario_0"
+scenario = "scenario_20"
 
 # orders setup from sheet
 df_orders = pd.read_excel(input_file, sheet_name="Orders")
@@ -33,7 +33,7 @@ orders_type_a = df_orders[df_orders["type"] == "A"]["order_id"].tolist()
 orders_type_b = df_orders[df_orders["type"] == "B"]["order_id"].tolist()
 orders = sorted(df_orders["order_id"].tolist())     # all orders in ascending order
 
-orders_revenue = dict(zip(df_orders["order_id"], df_orders["profit (€)"]))
+orders_revenue = dict(zip(df_orders["order_id"], df_orders["revenue (€)"]))     # orders revenue
 
 duration_dict = df_orders.set_index("order_id")["duration (h)"].to_dict()
 duration = [duration_dict[i] for i in orders]       # duration of execution of orders (in hours)
@@ -90,18 +90,61 @@ feasible_factories_orders = [
 # CREATING VARIABLES, LISTS & DICTIONARIES FOR THE SOLUTION OF THE PROBLEM
 # ----------------------------------------------------------------------------
 
-def solve_deterministic(forecast_en, print_output=False):
+def solve_deterministic(forecast_en, input_file=None, print_output=False):
 
-    # creation of Eji list for every order
-    Eji = {}
-    for j, i in feasible_factories_orders:
+# declaring global variables for dynamic data updates
+    global orders, orders_type_a, orders_type_b, orders_revenue
+    global duration, consumption
+    global factories, factories_type_a, factories_type_b, factories_type_c
+    global factories_orders, orders_2_factories, feasible_factories_orders
+
+# loading data from custom input file if provided
+    if input_file is not None:
+
+        # orders setup from custom sheet
+        df_ord = pd.read_excel(input_file, sheet_name="Orders")
+        orders_type_a = df_ord[df_ord["type"] == "A"]["order_id"].tolist()
+        orders_type_b = df_ord[df_ord["type"] == "B"]["order_id"].tolist()
+        orders = sorted(df_ord["order_id"].tolist())
+        
+        orders_revenue = dict(zip(df_ord["order_id"], df_ord["revenue (€)"]))
+        dur_dict = df_ord.set_index("order_id")["duration (h)"].to_dict()
+        duration = [dur_dict[i] for i in orders]
+        
+        cons_dict = df_ord.set_index("order_id")["consumption (MW/h)"].to_dict()
+        consumption = [cons_dict[i] for i in orders]
+
+        # factories setup from custom sheet
+        df_fac = pd.read_excel(input_file, sheet_name="Factories")
+        factories_type_a = df_fac[df_fac["type"] == "A"]["factory_id"].tolist()
+        factories_type_b = df_fac[df_fac["type"] == "B"]["factory_id"].tolist()
+        factories_type_c = df_fac[df_fac["type"] == "C"]["factory_id"].tolist()
+        factories = sorted(df_fac["factory_id"].tolist())
+
+        # creating combinations of factories-orders based on custom data
+        factories_orders = [(j, i) for i in orders for j in factories]
+        orders_2_factories = {
+            i: [j for j in factories if
+                (
+                    (i in orders_type_a and j in factories_type_a)
+                    or (i in orders_type_b and (j in factories_type_b or j in factories_type_c))
+                )
+            ]
+            for i in orders
+        }
+        feasible_factories_orders = [(j, i) for i in orders for j in orders_2_factories[i]]
+
+
+    # creation of Ei list for every order
+    Ei = {}
+    for i in orders:
         d = duration[i]
         cons = consumption[i]    
-        Eji[(j, i)] = []
+        Ei[i] = []
         for si in range(24):
             if si + d <= 24:
                 cost = sum(forecast_en[si : si + d]) * cons
-                Eji[(j, i)].append(cost)
+                Ei[i].append(cost)
 
     # defining indicative variables x, p & q
     x_ji = pulp.LpVariable.dicts("x", factories_orders, cat="Binary")
@@ -136,7 +179,7 @@ def solve_deterministic(forecast_en, print_output=False):
     # creating a custom variable for the calculation of the starting time
     s_hour = {}
     for j, i in feasible_factories_orders:
-        possible_starts = len(Eji[(j, i)])
+        possible_starts = len(Ei[i])
         s_hour[(j, i)] = [
             pulp.LpVariable(f"s_hour_{j}_{i}_{h:02d}", cat="Binary")
             for h in range(possible_starts)
@@ -170,7 +213,7 @@ def solve_deterministic(forecast_en, print_output=False):
         # sum of s_i[i] for each factory (only 1 is selected - the others are 0)
         hours_list = []
         for j in valid_factories_for_i:
-            possible_starts = len(Eji[(j, i)])
+            possible_starts = len(Ei[i])
             hours_list.extend([h * s_hour[(j, i)][h] for h in range(possible_starts)])
         # calculation of the starting time of each order i
         deterministicproblem += (
@@ -218,7 +261,7 @@ def solve_deterministic(forecast_en, print_output=False):
     # total energy cost
     total_cost = []
     for j, i in feasible_factories_orders:
-        for h, e in enumerate(Eji[(j, i)]):
+        for h, e in enumerate(Ei[i]):
             total_cost.append(-1 * e * s_hour[(j, i)][h])
 
     # total profit of orders placed in factories
@@ -240,7 +283,7 @@ def solve_deterministic(forecast_en, print_output=False):
     for j, i in feasible_factories_orders:
         x_decisions[(j, i)] = pulp.value(x_ji[(j, i)])
         
-    return deterministicproblem, profit, x_decisions, s_i, x_ji, Eji
+    return deterministicproblem, profit, x_decisions, s_i, x_ji, Ei
 
 
 # ----------------------------------------------------------------------------
@@ -252,7 +295,7 @@ if __name__ == "__main__":
     # create output directory if it doesn't exist
     os.makedirs("deterministic_results", exist_ok=True)
 
-    deterministicproblem, final_profit, x_decisions, s_i, x_ji, Eji = solve_deterministic(forecast_en, print_output=True)
+    deterministicproblem, final_profit, x_decisions, s_i, x_ji, Ei = solve_deterministic(forecast_en, print_output=True)
 
     # print and solve problem
     # print(deterministicproblem)
@@ -265,7 +308,7 @@ if __name__ == "__main__":
         print(v.name, "=", v.varValue)
 
 
-    print(f"Value of the objective function (Total Profit) = {pulp.value(deterministicproblem.objective)} €")
+    print(f"Value of the objective function (Total Profit) = {pulp.value(deterministicproblem.objective):.1f} €")
     print("\n--- RESULTS ---")
     total_revenue = 0
     total_spot_cost = 0
@@ -273,8 +316,8 @@ if __name__ == "__main__":
     for j, i in feasible_factories_orders:
         if x_ji[(j, i)].varValue is not None and x_ji[(j, i)].varValue > 0.5:
             start = int(s_i[i].varValue)
-            spot = Eji[(j, i)][start]
-            print(f"- Order {i} at Factory {j}: Start at {start:02d}:00 | Dur: {duration[i]}h | Cons/h: {consumption[i]} MW | Total Consumption: {consumption[i] * duration[i]} MWh | Revenue: {orders_revenue[i]} € | Spot Cost: {spot:.1f} € | Profit: {orders_revenue[i] - spot:.1f} €")
+            spot = Ei[i][start]
+            print(f"- Order {i} at Factory {j}: Start at {start:02d}:00 | Dur: {duration[i]}h | Cons/h: {consumption[i]} MW | Total Consumption: {consumption[i] * duration[i]} MWh | Revenue: {orders_revenue[i]} € | Spot Cost: {spot:.1f} € | Revenue: {orders_revenue[i] - spot:.1f} €")
             total_revenue += orders_revenue[i]
             total_spot_cost += spot
 
@@ -355,7 +398,7 @@ if __name__ == "__main__":
         # 1st graph - Energy cost of each factory
 
         # figure creation with specific dimensions
-        fig1, ax = plt.subplots(figsize=(12, 6))
+        fig1, ax = plt.subplots(figsize=(12, 6), linewidth=2, edgecolor='black')
 
         # exporting lists from plot_data
         p1_labels = [d["order_label"] for d in plot_data]
@@ -399,14 +442,14 @@ if __name__ == "__main__":
 
 
         # graph formatting
-        ax.set_ylabel("Energy Cost (€/Mwhr)", fontsize=12, fontweight="bold")
+        ax.set_ylabel("Energy Cost (€/MWh)", fontsize=12, fontweight="bold")
         ax.set_title("Energy Cost of each factory - Colored by type of orders", fontsize=14, fontweight='bold')
         ax.grid(axis="y", linestyle="--", alpha=0.5)
         ax.legend(handles=[red_patch, blue_patch], shadow=True,
                 loc='upper center', bbox_to_anchor=(0.5, -0.12),
                 ncol=2, framealpha=1)
         plt.tight_layout()
-        pdf.savefig(fig1)
+        pdf.savefig(fig1, edgecolor=fig1.get_edgecolor())
         plt.show()
         plt.close(fig1)
 
@@ -414,7 +457,7 @@ if __name__ == "__main__":
         # 2nd graph - Gantt Chart
 
         # figure creation with specific dimensions
-        fig2, ax = plt.subplots(figsize=(14, 8))
+        fig2, ax = plt.subplots(figsize=(14, 8), linewidth=2, edgecolor='black')
 
         # drawing grid lines
         ax.grid(axis="y", linestyle="--", color="black", alpha=0.5, zorder=0)
@@ -466,7 +509,7 @@ if __name__ == "__main__":
                 loc='upper center', bbox_to_anchor=(0.5, -0.12),
                 ncol=2, framealpha=1)
         plt.tight_layout()
-        pdf.savefig(fig2)
+        pdf.savefig(fig2, edgecolor=fig2.get_edgecolor())
         plt.show()
         plt.close(fig2)
 
@@ -474,7 +517,7 @@ if __name__ == "__main__":
         # 3rd graph - Chart of the energy cost over time
 
         # figure creation with specific dimensions
-        fig3, ax = plt.subplots(figsize=(14, 7))
+        fig3, ax = plt.subplots(figsize=(14, 7), linewidth=2, edgecolor='black')
 
         # creating 2 tables (one for each factory type)
         hourly_cost_type_a = np.zeros(24)
@@ -525,13 +568,13 @@ if __name__ == "__main__":
             color="black",
             linestyle="--",
             linewidth=1.5,
-            label=f"Average Hourly Cost ({average_cost:.1f} €/Mwhr)",
+            label=f"Average Hourly Cost ({average_cost:.1f} €/MWh)",
         )
 
         # graph formatting
         ax.set_title("Hourly Energy Cost Profile per Factory Type", fontsize=16, fontweight='bold')
         ax.set_xlabel("Hours of the day", fontsize=12, fontweight="bold")
-        ax.set_ylabel("Energy Cost (€/Mwhr)", fontsize=12, fontweight="bold")
+        ax.set_ylabel("Energy Cost (€/MWh)", fontsize=12, fontweight="bold")
         # axis setting
         ax.set_xlim(0, 23)
         ax.set_xticks(range(0, 24))
@@ -543,7 +586,7 @@ if __name__ == "__main__":
         ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12),
                 ncol=4, fontsize=11, frameon=True, shadow=True)
         plt.tight_layout()
-        pdf.savefig(fig3)
+        pdf.savefig(fig3, edgecolor=fig3.get_edgecolor())
         plt.show()
         plt.close(fig3)
 
@@ -551,7 +594,7 @@ if __name__ == "__main__":
         # 4th graph - Combo chart of order sorting & "energy cost" curve
 
         # figure creation with specific dimensions
-        fig4, ax1 = plt.subplots(figsize=(14, 8))
+        fig4, ax1 = plt.subplots(figsize=(14, 8), linewidth=2, edgecolor='black')
         # creation of axis Y2
         ax2 = ax1.twinx() 
 
@@ -637,7 +680,7 @@ if __name__ == "__main__":
         ]
         ax1.legend(handles=custom_lines, loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=3, shadow=True)
         plt.tight_layout()
-        pdf.savefig(fig4)
+        pdf.savefig(fig4, edgecolor=fig4.get_edgecolor())
         plt.show()
         plt.close(fig4)
 

@@ -34,7 +34,7 @@ profit_per_scenario = {}
 
 for w in scenarios:
     forecast = scenario_prices[w]
-    _, profit, _, _, _, _ = solve_deterministic(forecast_en=forecast, print_output=False)
+    _, profit, _, _, _, _ = solve_deterministic(forecast_en=forecast, input_file=input_file, print_output=False)
     profit_per_scenario[w] = profit
     print(f"\nScenario {w} (p={pscenarios[w]}):")
     print(f"  Optimal Profit (if known with certainty) = {profit:.1f} €")

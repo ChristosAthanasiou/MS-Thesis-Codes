@@ -41,7 +41,7 @@ for h, price in enumerate(EV_forecast):
 
 
 # solve deterministic problem using the EV forecast
-_, EV, EV_xji_decisions, _, _, _ = solve_deterministic(forecast_en=EV_forecast, print_output=False)
+_, EV, EV_xji_decisions, _, _, _ = solve_deterministic(forecast_en=EV_forecast, input_file="stochastic_data.xlsx", print_output=False)
 
 print("\nEV Order Acceptance Decisions (Stage 1):")
 for (j, i), val in EV_xji_decisions.items():

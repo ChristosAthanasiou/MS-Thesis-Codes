@@ -29,7 +29,7 @@ from matplotlib.lines import Line2D
 
 input_file = "stochastic_data.xlsx"
 
-scenario = "scenario_0"
+scenario = "scenario_20"
 
 # orders setup from sheet
 df_orders = pd.read_excel(input_file, sheet_name="Orders")
@@ -37,7 +37,7 @@ orders_type_a = df_orders[df_orders["type"] == "A"]["order_id"].tolist()
 orders_type_b = df_orders[df_orders["type"] == "B"]["order_id"].tolist()
 orders = sorted(df_orders["order_id"].tolist())     # all orders in ascending order
 
-orders_revenue = dict(zip(df_orders["order_id"], df_orders["profit (€)"]))   # orders profit
+orders_revenue = dict(zip(df_orders["order_id"], df_orders["revenue (€)"]))   # orders revenue
 
 duration_dict = df_orders.set_index("order_id")["duration (h)"].to_dict()
 duration = [duration_dict[i] for i in orders]        # duration of execution of orders (in hours)
@@ -100,19 +100,19 @@ feasible_factories_orders = [
 
 def solve_stochastic(fixed_x_decisions=None, print_output=False):
 
-    # creation of Eji list for every order and scenario (contains the energy cost of each order for every possible starting hour)
-    Eji = {}
+    # creation of Ewi list for every order and scenario (contains the energy cost of each order for every possible starting hour)
+    Ewi = {}
     for w in scenarios:
         current_forecast = scenario_prices[w]
-        for j, i in feasible_factories_orders:
+        for i in orders:
             d = duration[i]
             cons = consumption[i]
-            Eji[(w, j, i)] = []
+            Ewi[(w, i)] = []
             for si in range(24):
                 if si + d <= 24:
                     sum_prices = sum(current_forecast[si : si + d])
                     cost = sum_prices * cons
-                    Eji[(w, j, i)].append(cost)
+                    Ewi[(w, i)].append(cost)
 
 
 # ----------------------------------------------------------------------------
@@ -165,7 +165,7 @@ def solve_stochastic(fixed_x_decisions=None, print_output=False):
     s_hour = {}
     for w in scenarios:
         for j, i in feasible_factories_orders:
-            possible_starts = len(Eji[(w, j, i)])
+            possible_starts = len(Ewi[(w, i)])
             s_hour[(w, j, i)] = [
                 pulp.LpVariable(f"s_hour_scen{w}_{j}_{i}_{h:02d}", cat="Binary")
                 for h in range(possible_starts)
@@ -219,7 +219,7 @@ def solve_stochastic(fixed_x_decisions=None, print_output=False):
             # starting time of order i = sum of h * s_hour[h] over all feasible starts (only 1 is selected - the others are 0)
             hours_list = []
             for j in valid_factories_for_i:
-                possible_starts = len(Eji[(w, j, i)])
+                possible_starts = len(Ewi[(w, i)])
                 hours_list.extend([h * s_hour[(w, j, i)][h] for h in range(possible_starts)])
             # calculation of the starting time of each order i in scenario w
             twostageprob += (
@@ -277,8 +277,8 @@ def solve_stochastic(fixed_x_decisions=None, print_output=False):
         # spot energy cost for scenario w
         scenario_hourly_cost = []
         for j, i in feasible_factories_orders:
-            for h, e in enumerate(Eji[(w, j, i)]):
-                scenario_hourly_cost.append(Eji[(w, j, i)][h] * s_hour[(w, j, i)][h])
+            for h, e in enumerate(Ewi[(w, i)]):
+                scenario_hourly_cost.append(Ewi[(w, i)][h] * s_hour[(w, j, i)][h])
         scenario_spot_cost = pulp.lpSum(scenario_hourly_cost)
 
         # weighted spot cost for scenario w
@@ -297,7 +297,7 @@ def solve_stochastic(fixed_x_decisions=None, print_output=False):
     # extract Stage 1 decisions
     x_decisions = {(j, i): pulp.value(x_ji[(j, i)]) for (j, i) in feasible_factories_orders}
 
-    return twostageprob, expected_profit, x_decisions, s_i, x_ji, Eji
+    return twostageprob, expected_profit, x_decisions, s_i, x_ji, Ewi
 
 
 # ----------------------------------------------------------------------------
@@ -309,7 +309,7 @@ if __name__ == "__main__":
     # create output directory if it doesn't exist
     os.makedirs("stochastic_results", exist_ok=True)
 
-    twostageprob, expected_profit, x_decisions, s_i, x_ji, Eji = solve_stochastic(print_output=True)
+    twostageprob, expected_profit, x_decisions, s_i, x_ji, Ewi = solve_stochastic(print_output=True)
 
     # print and solve problem
     # print(twostageprob)
@@ -339,8 +339,8 @@ if __name__ == "__main__":
         for j, i in feasible_factories_orders:
             if x_ji[(j, i)].varValue is not None and x_ji[(j, i)].varValue > 0.5:
                 start = int(pulp.value(s_i[(w, i)]))
-                spot = Eji[(w, j, i)][start]            
-                print(f"- Order {i} at Factory {j}: Start at {start:02d}:00 | Dur: {duration[i]}h | Cons/h: {consumption[i]} MW | Total Cons: {consumption[i] * duration[i]} MWh | Revenue: {orders_revenue[i]} € | Spot Cost: {spot:.1f}€ | Profit: {orders_revenue[i] - spot:.1f}€")
+                spot = Ewi[(w, i)][start]            
+                print(f"- Order {i} at Factory {j}: Start at {start:02d}:00 | Dur: {duration[i]}h | Cons/h: {consumption[i]} MW | Total Cons: {consumption[i] * duration[i]} MWh | Revenue: {orders_revenue[i]} € | Spot Cost: {spot:.1f}€ | Revenue: {orders_revenue[i] - spot:.1f}€")
                 cons += consumption[i] * duration[i]
                 scenario_revenue += orders_revenue[i]
                 scenario_spot_cost += spot
@@ -365,362 +365,362 @@ if __name__ == "__main__":
 # CREATION & DISPLAY OF THE DIAGRAMS
 # ----------------------------------------------------------------------------
 
-# save all graphs to a single PDF file
-pdf_path = f"stochastic_results/problem_{scenario}_graphs.pdf"
-with PdfPages(pdf_path) as pdf:
+    # save all graphs to a single PDF file
+    pdf_path = f"stochastic_results/problem_{scenario}_graphs.pdf"
+    with PdfPages(pdf_path) as pdf:
 
-    for w in scenarios:
-        current_prices = scenario_prices[w]
+        for w in scenarios:
+            current_prices = scenario_prices[w]
 
-        # data preparation for standard variables
-        plot_data = []
+            # data preparation for standard variables
+            plot_data = []
 
-        for i in orders:
-            # finding the factory where order i has been assigned
-            assigned_factory = None
-            for j in factories:
-                if (
-                    (j, i) in x_ji
-                    and x_ji[(j, i)].varValue is not None
-                    and x_ji[(j, i)].varValue > 0.5
-                ):
-                    assigned_factory = j
-                    break
+            for i in orders:
+                # finding the factory where order i has been assigned
+                assigned_factory = None
+                for j in factories:
+                    if (
+                        (j, i) in x_ji
+                        and x_ji[(j, i)].varValue is not None
+                        and x_ji[(j, i)].varValue > 0.5
+                    ):
+                        assigned_factory = j
+                        break
 
-            # retrieves time info from Stage 2
-            start_time = s_i[w, i].varValue
-            dur = duration[i]
+                # retrieves time info from Stage 2
+                start_time = s_i[w, i].varValue
+                dur = duration[i]
 
-            # cost calculation
-            cost = 0
-            if start_time is not None:
-                start_idx = int(start_time)
-                if start_idx + dur <= 24:
-                    cost = sum(current_prices[start_idx : start_idx + dur])
+                # cost calculation
+                cost = 0
+                if start_time is not None:
+                    start_idx = int(start_time)
+                    if start_idx + dur <= 24:
+                        cost = sum(current_prices[start_idx : start_idx + dur])
 
-            # color determination
-            if i in orders_type_a:
-                color="red"
-            else:
-                color="blue"
+                # color determination
+                if i in orders_type_a:
+                    color="red"
+                else:
+                    color="blue"
 
-            # save to plot_data only if order was accepted
-            if assigned_factory is not None and start_time is not None:
-                plot_data.append(
-                    {
-                        "order_id": i,
-                        "order_label": f"Order {i}",
-                        "start": start_time,
-                        "duration": dur,
-                        "cost": cost,
-                        "color": color,
-                        "factory_label": f"Factory {assigned_factory}",
-                    }
+                # save to plot_data only if order was accepted
+                if assigned_factory is not None and start_time is not None:
+                    plot_data.append(
+                        {
+                            "order_id": i,
+                            "order_label": f"Order {i}",
+                            "start": start_time,
+                            "duration": dur,
+                            "cost": cost,
+                            "color": color,
+                            "factory_label": f"Factory {assigned_factory}",
+                        }
+                    )
+
+            # legend patches (shared across graphs)
+            red_patch = mpatches.Patch(color="red", label="Type A Orders")
+            blue_patch = mpatches.Patch(color="blue", label="Type B Orders")
+
+
+            # 1st graph - Energy cost per order
+
+            # figure creation with specific dimensions
+            fig1, ax = plt.subplots(figsize=(12, 6), linewidth=2, edgecolor='black')
+
+            # exporting lists from plot_data
+            p1_labels = [d["order_label"] for d in plot_data]
+            p1_costs = [d["cost"] for d in plot_data]
+            p1_colors = [d["color"] for d in plot_data]
+            p1_factories = [d["factory_label"] for d in plot_data]
+
+            bars = ax.bar(p1_labels, p1_costs, color=p1_colors,
+                        edgecolor='black', linewidth=1.5, alpha=0.75)
+
+            # add text inside bars
+            for bar, factory_name, item in zip(bars, p1_factories, plot_data):
+                height = bar.get_height()
+
+                # factory label
+                txt1 = ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    height / 2 + 10,
+                    factory_name,
+                    ha="center",
+                    va="center",
+                    color="white",
+                    fontweight="bold",
+                    fontsize=10
+                )
+                txt1.set_path_effects([path_effects.withStroke(linewidth=2.5, foreground='black')])
+
+                # total consumption label
+                txt2 = ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    height / 2 - (height/8),
+                    f"{consumption[item['order_id']] * duration[item['order_id']]} MWh",
+                    ha="center",
+                    va="center",
+                    color="white",
+                    fontweight="normal",
+                    fontsize=9
+                )
+                txt2.set_path_effects([path_effects.withStroke(linewidth=2.5, foreground='black')])
+
+            # graph formatting
+            ax.set_ylabel("Energy Cost (€ per MWh)", fontsize=12, fontweight="bold")
+            ax.set_title(f"Energy Cost per Order - Scenario {w} (p={pscenarios[w]}) - Colored by Type", fontsize=14, fontweight='bold')
+            ax.grid(axis="y", linestyle="--", alpha=0.5)
+            ax.legend(handles=[red_patch, blue_patch], shadow=True,
+                    loc='upper center', bbox_to_anchor=(0.5, -0.12),
+                    ncol=2, framealpha=1)
+            plt.tight_layout()
+            pdf.savefig(fig1, edgecolor=fig1.get_edgecolor())
+            plt.show()
+            plt.close(fig1)
+
+
+            # 2nd graph - Gantt Chart
+
+            # figure creation with specific dimensions
+            fig2, ax = plt.subplots(figsize=(14, 8), linewidth=2, edgecolor='black')
+
+            # drawing grid lines
+            ax.grid(axis="y", linestyle="--", color="black", alpha=0.5, zorder=0)
+            ax.grid(axis="x", linestyle=":", alpha=0.3, zorder=0)
+
+            for item in plot_data:
+                # creating bar
+                ax.barh(
+                    y=item["order_label"],
+                    width=item["duration"],
+                    left=item["start"],
+                    color=item["color"],
+                    edgecolor="black",
+                    linewidth=1.5,
+                    alpha=0.85,
+                    zorder=3
                 )
 
-        # legend patches (shared across graphs)
-        red_patch = mpatches.Patch(color="red", label="Type A Orders")
-        blue_patch = mpatches.Patch(color="blue", label="Type B Orders")
+                # adjusting text size according to block size
+                if item["duration"] <= 1:
+                    f_size = 8
+                    f_weight = "normal"
+                else:
+                    f_size = 10
+                    f_weight = "bold"
+
+                # adding text
+                txt = ax.text(
+                    x=item["start"] + item["duration"] / 2,
+                    y=item["order_label"],
+                    s=item["factory_label"],
+                    ha="center",
+                    va="center",
+                    color="white",
+                    fontweight=f_weight,
+                    fontsize=f_size,
+                    zorder=4,
+                )
+                txt.set_path_effects([path_effects.withStroke(linewidth=2.5, foreground='black')])
+
+            # graph formatting
+            ax.set_title(f"Order Scheduling (Gantt Chart) - Scenario {w} (p={pscenarios[w]})", fontsize=16, fontweight='bold')
+            ax.set_xlabel("Hours of the Day", fontsize=12, fontweight="bold")
+            ax.set_ylabel("Orders", fontsize=12, fontweight="bold")
+            ax.set_xlim(0, 24)
+            ax.set_xticks(range(0, 25))
+            ax.invert_yaxis()  # order 0 at top
+            ax.legend(handles=[red_patch, blue_patch], shadow=True,
+                    loc="upper center", bbox_to_anchor=(0.5, -0.12),
+                    ncol=2, framealpha=1)
+            plt.tight_layout()
+            pdf.savefig(fig2, edgecolor=fig2.get_edgecolor())
+            plt.show()
+            plt.close(fig2)
 
 
-        # 1st graph - Energy cost per order
+            # 3rd graph - Hourly energy cost profile
 
-        # figure creation with specific dimensions
-        fig1, ax = plt.subplots(figsize=(12, 6))
+            # figure creation with specific dimensions
+            fig3, ax = plt.subplots(figsize=(14, 7), linewidth=2, edgecolor='black')
 
-        # exporting lists from plot_data
-        p1_labels = [d["order_label"] for d in plot_data]
-        p1_costs = [d["cost"] for d in plot_data]
-        p1_colors = [d["color"] for d in plot_data]
-        p1_factories = [d["factory_label"] for d in plot_data]
+            # creating 2 tables (one for each factory type)
+            hourly_cost_type_a = np.zeros(24)
+            hourly_cost_type_b = np.zeros(24)
+            hourly_cost_type_c = np.zeros(24)
 
-        bars = ax.bar(p1_labels, p1_costs, color=p1_colors,
-                    edgecolor='black', linewidth=1.5, alpha=0.75)
+            # run through the data we already have in plot_data
+            for item in plot_data:
+                # exporting the factory ID as integer
+                f_id = int(item["factory_label"].split(" ")[1])
+                # exporting the starting time and duration as integers
+                start = int(item["start"])
+                dur = int(item["duration"])
 
-        # add text inside bars
-        for bar, factory_name, item in zip(bars, p1_factories, plot_data):
-            height = bar.get_height()
+                # checking if factory is Type A or B
+                is_type_a = f_id in factories_type_a
+                is_type_b = f_id in factories_type_b
 
-            # factory label
-            txt1 = ax.text(
-                bar.get_x() + bar.get_width() / 2,
-                height / 2 + 10,
-                factory_name,
-                ha="center",
-                va="center",
-                color="white",
-                fontweight="bold",
-                fontsize=10
+                # adding the energy cost for each hour that the factory operates
+                for h in range(start, start + dur):
+                    if h < 24:
+                        cost_at_h = current_prices[h]
+                        if is_type_a:
+                            hourly_cost_type_a[h] += cost_at_h
+                        elif is_type_b:
+                            hourly_cost_type_b[h] += cost_at_h
+                        else:
+                            hourly_cost_type_c[h] += cost_at_h
+
+            # calculation of the two mean values
+            total_hourly_cost = hourly_cost_type_a + hourly_cost_type_b + hourly_cost_type_c
+
+            # 1st mean value: average over all 24 hours
+            average_cost_24h = np.mean(total_hourly_cost)
+
+            # 2nd mean value: average over active hours only
+            active_hours = total_hourly_cost[total_hourly_cost > 0]
+            average_cost_active = np.mean(active_hours) if len(active_hours) > 0 else 0
+
+            # drawing the red/blue/green lines for Type A/B/C factories respectively
+            ax.plot(
+                range(24), hourly_cost_type_a, color="red", linewidth=2.5, label="Type A Factories"
             )
-            txt1.set_path_effects([path_effects.withStroke(linewidth=2.5, foreground='black')])
-
-            # total consumption label
-            txt2 = ax.text(
-                bar.get_x() + bar.get_width() / 2,
-                height / 2 - (height/8),
-                f"{consumption[item['order_id']] * duration[item['order_id']]} MWh",
-                ha="center",
-                va="center",
-                color="white",
-                fontweight="normal",
-                fontsize=9
+            ax.plot(
+                range(24), hourly_cost_type_b, color="blue", linewidth=2.5, label="Type B Factories"
             )
-            txt2.set_path_effects([path_effects.withStroke(linewidth=2.5, foreground='black')])
+            ax.plot(
+                range(24), hourly_cost_type_c, color="green", linewidth=2.5, label="Type C Factories"
+            )
 
-        # graph formatting
-        ax.set_ylabel("Energy Cost (€ per MWh)", fontsize=12, fontweight="bold")
-        ax.set_title(f"Energy Cost per Order - Scenario {w} (p={pscenarios[w]}) - Colored by Type", fontsize=14, fontweight='bold')
-        ax.grid(axis="y", linestyle="--", alpha=0.5)
-        ax.legend(handles=[red_patch, blue_patch], shadow=True,
-                loc='upper center', bbox_to_anchor=(0.5, -0.12),
-                ncol=2, framealpha=1)
-        plt.tight_layout()
-        pdf.savefig(fig1)
-        plt.show()
-        plt.close(fig1)
-
-
-        # 2nd graph - Gantt Chart
-
-        # figure creation with specific dimensions
-        fig2, ax = plt.subplots(figsize=(14, 8))
-
-        # drawing grid lines
-        ax.grid(axis="y", linestyle="--", color="black", alpha=0.5, zorder=0)
-        ax.grid(axis="x", linestyle=":", alpha=0.3, zorder=0)
-
-        for item in plot_data:
-            # creating bar
-            ax.barh(
-                y=item["order_label"],
-                width=item["duration"],
-                left=item["start"],
-                color=item["color"],
-                edgecolor="black",
+            # drawing the dotted line of the average over all 24 hours
+            ax.axhline(
+                y=average_cost_24h,
+                color="black",
+                linestyle="--",
                 linewidth=1.5,
-                alpha=0.85,
-                zorder=3
+                label=f"Average Cost - All Hours ({average_cost_24h:.1f} € per MWh)",
             )
 
-            # adjusting text size according to block size
-            if item["duration"] <= 1:
-                f_size = 8
-                f_weight = "normal"
-            else:
-                f_size = 10
-                f_weight = "bold"
-
-            # adding text
-            txt = ax.text(
-                x=item["start"] + item["duration"] / 2,
-                y=item["order_label"],
-                s=item["factory_label"],
-                ha="center",
-                va="center",
-                color="white",
-                fontweight=f_weight,
-                fontsize=f_size,
-                zorder=4,
-            )
-            txt.set_path_effects([path_effects.withStroke(linewidth=2.5, foreground='black')])
-
-        # graph formatting
-        ax.set_title(f"Order Scheduling (Gantt Chart) - Scenario {w} (p={pscenarios[w]})", fontsize=16, fontweight='bold')
-        ax.set_xlabel("Hours of the Day", fontsize=12, fontweight="bold")
-        ax.set_ylabel("Orders", fontsize=12, fontweight="bold")
-        ax.set_xlim(0, 24)
-        ax.set_xticks(range(0, 25))
-        ax.invert_yaxis()  # order 0 at top
-        ax.legend(handles=[red_patch, blue_patch], shadow=True,
-                loc="upper center", bbox_to_anchor=(0.5, -0.12),
-                ncol=2, framealpha=1)
-        plt.tight_layout()
-        pdf.savefig(fig2)
-        plt.show()
-        plt.close(fig2)
-
-
-        # 3rd graph - Hourly energy cost profile
-
-        # figure creation with specific dimensions
-        fig3, ax = plt.subplots(figsize=(14, 7))
-
-        # creating 2 tables (one for each factory type)
-        hourly_cost_type_a = np.zeros(24)
-        hourly_cost_type_b = np.zeros(24)
-        hourly_cost_type_c = np.zeros(24)
-
-        # run through the data we already have in plot_data
-        for item in plot_data:
-            # exporting the factory ID as integer
-            f_id = int(item["factory_label"].split(" ")[1])
-            # exporting the starting time and duration as integers
-            start = int(item["start"])
-            dur = int(item["duration"])
-
-            # checking if factory is Type A or B
-            is_type_a = f_id in factories_type_a
-            is_type_b = f_id in factories_type_b
-
-            # adding the energy cost for each hour that the factory operates
-            for h in range(start, start + dur):
-                if h < 24:
-                    cost_at_h = current_prices[h]
-                    if is_type_a:
-                        hourly_cost_type_a[h] += cost_at_h
-                    elif is_type_b:
-                        hourly_cost_type_b[h] += cost_at_h
-                    else:
-                        hourly_cost_type_c[h] += cost_at_h
-
-        # calculation of the two mean values
-        total_hourly_cost = hourly_cost_type_a + hourly_cost_type_b + hourly_cost_type_c
-
-        # 1st mean value: average over all 24 hours
-        average_cost_24h = np.mean(total_hourly_cost)
-
-        # 2nd mean value: average over active hours only
-        active_hours = total_hourly_cost[total_hourly_cost > 0]
-        average_cost_active = np.mean(active_hours) if len(active_hours) > 0 else 0
-
-        # drawing the red/blue/green lines for Type A/B/C factories respectively
-        ax.plot(
-            range(24), hourly_cost_type_a, color="red", linewidth=2.5, label="Type A Factories"
-        )
-        ax.plot(
-            range(24), hourly_cost_type_b, color="blue", linewidth=2.5, label="Type B Factories"
-        )
-        ax.plot(
-            range(24), hourly_cost_type_c, color="green", linewidth=2.5, label="Type C Factories"
-        )
-
-        # drawing the dotted line of the average over all 24 hours
-        ax.axhline(
-            y=average_cost_24h,
-            color="black",
-            linestyle="--",
-            linewidth=1.5,
-            label=f"Average Cost - All Hours ({average_cost_24h:.1f} € per MWh)",
-        )
-
-        # drawing the dotted line of the average over all 24 hours
-        ax.axhline(
-            y=average_cost_active,
-            color="gray",
-            linestyle="-.",
-            linewidth=1.5,
-            label=f"Average Cost - Active Hours ({average_cost_active:.1f} € per MWh)",
-    )
-
-        # graph formatting
-        ax.set_title(f"Hourly Energy Cost Profile - Scenario {w} (p={pscenarios[w]})", fontsize=16, fontweight='bold')
-        ax.set_xlabel("Hours of the day", fontsize=12, fontweight="bold")
-        ax.set_ylabel("Energy Cost (€ per MWh)", fontsize=12, fontweight="bold")
-        # axis setting
-        ax.set_xlim(0, 23)
-        ax.set_xticks(range(0, 24))
-        ax.grid(True, linestyle="-", alpha=0.3)  # background grid
-        # filling the area below the lines
-        ax.fill_between(range(24), hourly_cost_type_a, color="red", alpha=0.1)
-        ax.fill_between(range(24), hourly_cost_type_b, color="blue", alpha=0.1)
-        ax.fill_between(range(24), hourly_cost_type_c, color="green", alpha=0.1)
-        ax.legend(loc="upper center", fontsize=11, frameon=True, shadow=True,
-                bbox_to_anchor=(0.5, -0.12), ncol=4)
-        plt.tight_layout()
-        pdf.savefig(fig3)
-        plt.show()
-        plt.close(fig3)
-
-
-        # 4th graph - Combined schedule & energy price curve
-        
-        # figure creation with specific dimensions
-        fig4, ax1 = plt.subplots(figsize=(14, 8))
-        # creation of axis Y2
-        ax2 = ax1.twinx() 
-
-        # drawing the energy price curve
-        ax2.plot(
-            list(range(24)) + [23.9], 
-            current_prices + [current_prices[-1]],    # repeat last value so the line completes at x=24
-            color='orange', 
-            linewidth=4, 
-            alpha=0.8,
-            label='Energy Price (€ per MWh)',
-            zorder=2,    # behind the letters but in front of the grid
-            drawstyle='steps-post'
-        )
-
-        # adjustments for axis Y2
-        ax2.set_ylabel("Energy Price (€ per MWh)", fontsize=12, color='darkorange', fontweight='bold')
-        ax2.tick_params(axis='y', labelcolor='darkorange')
-        ax2.set_ylim(0, max(current_prices) + 50)
-
-        # export all factories for the Y1 axis
-        all_factories = sorted(factories)
-        factory_labels = [f"Factory {f}" for f in all_factories]
-
-        for item in plot_data:
-            # finding the factory ID
-            f_id = int(item["factory_label"].split()[1])
-            # drawing bar
-            ax1.barh(
-                y=f_id, 
-                width=item["duration"], 
-                left=item["start"], 
-                color=item["color"], 
-                edgecolor='black',
-                alpha=0.85,
+            # drawing the dotted line of the average over all 24 hours
+            ax.axhline(
+                y=average_cost_active,
+                color="gray",
+                linestyle="-.",
                 linewidth=1.5,
-                height=0.6,
-                zorder=1    # behind the curve
-            )
+                label=f"Average Cost - Active Hours ({average_cost_active:.1f} € per MWh)",
+        )
+
+            # graph formatting
+            ax.set_title(f"Hourly Energy Cost Profile - Scenario {w} (p={pscenarios[w]})", fontsize=16, fontweight='bold')
+            ax.set_xlabel("Hours of the day", fontsize=12, fontweight="bold")
+            ax.set_ylabel("Energy Cost (€ per MWh)", fontsize=12, fontweight="bold")
+            # axis setting
+            ax.set_xlim(0, 23)
+            ax.set_xticks(range(0, 24))
+            ax.grid(True, linestyle="-", alpha=0.3)  # background grid
+            # filling the area below the lines
+            ax.fill_between(range(24), hourly_cost_type_a, color="red", alpha=0.1)
+            ax.fill_between(range(24), hourly_cost_type_b, color="blue", alpha=0.1)
+            ax.fill_between(range(24), hourly_cost_type_c, color="green", alpha=0.1)
+            ax.legend(loc="upper center", fontsize=11, frameon=True, shadow=True,
+                    bbox_to_anchor=(0.5, -0.12), ncol=4)
+            plt.tight_layout()
+            pdf.savefig(fig3, edgecolor=fig3.get_edgecolor())
+            plt.show()
+            plt.close(fig3)
+
+
+            # 4th graph - Combined schedule & energy price curve
             
-            # adjusting text size
-            if item["duration"] <= 1:
-                f_size = 8
-            else:
-                f_size = 10
+            # figure creation with specific dimensions
+            fig4, ax1 = plt.subplots(figsize=(14, 8), linewidth=2, edgecolor='black')
+            # creation of axis Y2
+            ax2 = ax1.twinx() 
 
-            # adding text "Order X"
-            txt = ax1.text(
-                x=item["start"] + item["duration"] / 2,
-                y=f_id,
-                s=item["order_label"],
-                ha='center', 
-                va='center', 
-                color='white', 
-                fontweight='bold', 
-                fontsize=f_size, 
-                zorder=3
+            # drawing the energy price curve
+            ax2.plot(
+                list(range(24)) + [23.9], 
+                current_prices + [current_prices[-1]],    # repeat last value so the line completes at x=24
+                color='orange', 
+                linewidth=4, 
+                alpha=0.8,
+                label='Energy Price (€ per MWh)',
+                zorder=2,    # behind the letters but in front of the grid
+                drawstyle='steps-post'
             )
-            # black outline around the text
-            txt.set_path_effects([path_effects.withStroke(linewidth=2.5, foreground='black')])
 
-        # adjustments for axis Y1
-        ax1.set_xlabel("Hours of Day", fontsize=12, fontweight="bold")
-        ax1.set_ylabel("Production Line", fontsize=12, fontweight="bold")
-        ax1.set_yticks(all_factories)
-        ax1.set_yticklabels(factory_labels, fontsize=11, fontweight='normal')
+            # adjustments for axis Y2
+            ax2.set_ylabel("Energy Price (€ per MWh)", fontsize=12, color='darkorange', fontweight='bold')
+            ax2.tick_params(axis='y', labelcolor='darkorange')
+            ax2.set_ylim(0, max(current_prices) + 50)
 
-        # adjustments for axis X and grid
-        ax1.set_xlim(0, 24)
-        ax1.set_xticks(range(0, 25))
-        ax1.grid(axis='x', linestyle=':', alpha=0.5)
-        ax1.invert_yaxis()  # factory 0 at top
-        ax1.set_title(f"Combined Schedule & Energy Cost Profile - Scenario {w} (p={pscenarios[w]})", fontsize=16, pad=20, fontweight='bold')
+            # export all factories for the Y1 axis
+            all_factories = sorted(factories)
+            factory_labels = [f"Factory {f}" for f in all_factories]
 
-        # creation and placement of the custom legend of graph
-        custom_lines = [
-            mpatches.Patch(color='red', label='Type A Orders'),
-            mpatches.Patch(color='blue', label='Type B Orders'),
-            Line2D([0], [0], color='orange', lw=3, label='Energy Price')
-        ]
-        ax1.legend(handles=custom_lines, loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=3, shadow=True)
-        plt.tight_layout()
-        pdf.savefig(fig4)
-        plt.show()
-        plt.close(fig4)
+            for item in plot_data:
+                # finding the factory ID
+                f_id = int(item["factory_label"].split()[1])
+                # drawing bar
+                ax1.barh(
+                    y=f_id, 
+                    width=item["duration"], 
+                    left=item["start"], 
+                    color=item["color"], 
+                    edgecolor='black',
+                    alpha=0.85,
+                    linewidth=1.5,
+                    height=0.6,
+                    zorder=1    # behind the curve
+                )
+                
+                # adjusting text size
+                if item["duration"] <= 1:
+                    f_size = 8
+                else:
+                    f_size = 10
+
+                # adding text "Order X"
+                txt = ax1.text(
+                    x=item["start"] + item["duration"] / 2,
+                    y=f_id,
+                    s=item["order_label"],
+                    ha='center', 
+                    va='center', 
+                    color='white', 
+                    fontweight='bold', 
+                    fontsize=f_size, 
+                    zorder=3
+                )
+                # black outline around the text
+                txt.set_path_effects([path_effects.withStroke(linewidth=2.5, foreground='black')])
+
+            # adjustments for axis Y1
+            ax1.set_xlabel("Hours of Day", fontsize=12, fontweight="bold")
+            ax1.set_ylabel("Production Line", fontsize=12, fontweight="bold")
+            ax1.set_yticks(all_factories)
+            ax1.set_yticklabels(factory_labels, fontsize=11, fontweight='normal')
+
+            # adjustments for axis X and grid
+            ax1.set_xlim(0, 24)
+            ax1.set_xticks(range(0, 25))
+            ax1.grid(axis='x', linestyle=':', alpha=0.5)
+            ax1.invert_yaxis()  # factory 0 at top
+            ax1.set_title(f"Combined Schedule & Energy Cost Profile - Scenario {w} (p={pscenarios[w]})", fontsize=16, pad=20, fontweight='bold')
+
+            # creation and placement of the custom legend of graph
+            custom_lines = [
+                mpatches.Patch(color='red', label='Type A Orders'),
+                mpatches.Patch(color='blue', label='Type B Orders'),
+                Line2D([0], [0], color='orange', lw=3, label='Energy Price')
+            ]
+            ax1.legend(handles=custom_lines, loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=3, shadow=True)
+            plt.tight_layout()
+            pdf.savefig(fig4, edgecolor=fig4.get_edgecolor())
+            plt.show()
+            plt.close(fig4)
 
     print(f"\nResults saved to: stochastic_results/problem_{scenario}.xlsx")
     print(f"Graphs saved to:  stochastic_results/problem_{scenario}_graphs.pdf")
