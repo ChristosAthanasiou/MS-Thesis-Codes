@@ -29,7 +29,7 @@ from matplotlib.lines import Line2D
 
 input_file = "stochastic_data.xlsx"
 
-scenario = "scenario_20"
+scenario = "scenario_0"
 
 # orders setup from sheet
 df_orders = pd.read_excel(input_file, sheet_name="Orders")
